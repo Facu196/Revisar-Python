@@ -1,0 +1,129 @@
+# Importar las bibliotecas necesarias
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.backends.backend_pdf import PdfPages
+from google.colab import files
+
+# Tamaño de A4 en pulgadas
+A4_width = 8.27
+A4_height = 11.69
+
+# Ajustes para el diseño del PDF
+left_margin = 0.5 / A4_width  # Convertir a fracción de la anchura de A4
+right_margin = (A4_width - 0.5) / A4_width
+top_margin = (A4_height - 1) / A4_height  # Ajustar margen superior para mover los gráficos hacia abajo
+bottom_margin = 0.5 / A4_height
+
+# Función para cargar el archivo Excel desde el sistema local a Google Colab
+def cargar_archivo():
+    uploaded = files.upload()  # Esto abrirá una interfaz para cargar archivos en Google Colab
+    archivos = []
+    for nombre_archivo in uploaded.keys():
+        if 'Agua purificada' in nombre_archivo or 'Red' in nombre_archivo or 'proceso' in nombre_archivo:
+            archivos.append(nombre_archivo)
+        else:
+            print(f"El archivo '{nombre_archivo}' no contiene las palabras clave requeridas y será omitido.")
+    if not archivos:
+        raise ValueError("No se ha encontrado ningún archivo válido con las palabras clave requeridas.")
+
+    xls = {nombre: pd.ExcelFile(nombre) for nombre in archivos}
+    return xls
+
+# Función para preparar los datos y generar gráficos de dispersión
+def generar_graficos(xls):
+    # Definir las columnas de interés para graficar
+    columnas_graficos = ['TOC', 'Conductividad', 'Recuento de aerobios mesófilos', 'Enterobacter', 'P. aeruginosa']
+
+    for nombre_archivo, xls_file in xls.items():
+        pdf_filename = nombre_archivo.replace('.xlsx', '.pdf')
+
+        # Determinar la parte del título en función del nombre del archivo
+        if 'purificada' in nombre_archivo:
+            primer_renglon = 'Agua purificada - Loop de distribución'
+        elif 'Red' in nombre_archivo:
+            primer_renglon = 'Agua de Red'
+        elif 'proceso' in nombre_archivo:
+            primer_renglon = 'Equipo de Ósmosis Aqua-Roe SW450'
+        else:
+            primer_renglon = 'Agua'
+
+        with PdfPages(pdf_filename) as pdf:
+            for sheet_name in xls_file.sheet_names:
+                if sheet_name in ['001', '002', '003', '004', '006', '009', '010', '101', '102', '103', '104', '105', '106',
+                                  '301', '302', '303', '401', '402', '404', 'SP05', 'SP03', 'SP04', 'SP05', 'SP06', '107']:
+                    df = pd.read_excel(xls_file, sheet_name=sheet_name)  # Cargar la hoja específica del archivo Excel
+
+                    # Interpretación de "Aus", "Presencia" o "Pres" como valores numéricos
+                    df['Enterobacter'] = df['Enterobacter'].replace({'Aus': 0, 'Presencia': 1, 'Pres': 1})
+                    df['P. aeruginosa'] = df['P. aeruginosa'].replace({'Aus': 0, 'Presencia': 1, 'Pres': 1})
+
+                    # Obtener el año del último dato de la columna "fecha"
+                    year = df['fecha'].dt.year.max()
+
+                    total_graficos = len(columnas_graficos)
+                    for i in range(0, total_graficos, 5):
+                        fig, axs = plt.subplots(5, 1, figsize=(A4_width, A4_height), constrained_layout=True)
+
+                        # Título dinámico basado en el nombre del sector y el año de los datos
+                        segundo_renglon = f'Controles Químicos y Microbiológicos - Año {year}'
+                        titulo = f'{primer_renglon}\n{segundo_renglon}'
+                        fig.suptitle(titulo, fontsize=7, fontweight='bold', va='top', ha='center')
+
+                        for k in range(5):
+                            if i + k < total_graficos:
+                                ax = axs[k]
+                                columna = columnas_graficos[i + k]
+                                df_plot = df[['fecha', columna]].dropna()
+
+                                ax.scatter(df_plot['fecha'], df_plot[columna], color='black', marker='o', s=10)
+                                ax.set_title(f'{sheet_name} - {columna}', fontsize=5)
+                                ax.xaxis.set_major_formatter(mdates.DateFormatter('%d/%m/%Y'))
+                                ax.tick_params(axis='x', rotation=45, labelsize=5)
+                                ax.tick_params(axis='y', labelsize=5)
+
+                                if columna == 'TOC':
+                                    ax.set_ylabel('ppb', fontsize=5)
+                                    ax.axhline(y=250, color='orange', linestyle='--', label='250 ppb')
+                                    ax.axhline(y=500, color='red', linestyle='--', label='500 ppb')
+                                    max_toc = df['TOC'].max()
+                                    if max_toc <= 500:
+                                        ax.set_ylim(-5, 500 * 1.1)
+                                    else:
+                                        max_above_500 = df[df['TOC'] > 500]['TOC'].max()
+                                        ax.set_ylim(-5, max_above_500 * 1.1)
+                                    ax.legend(loc='upper right', fontsize=5, framealpha=0)
+                                elif columna == 'Conductividad':
+                                    ax.set_ylabel('μS/cm', fontsize=5)
+                                    ax.set_ylim(-0.5, 4.0)
+                                elif 'Recuento de' in columna:
+                                    ax.set_ylabel('UFC/mL', fontsize=5)
+                                    ax.axhline(y=10, color='orange', linestyle='--', label='10 UFC/mL')
+                                    ax.axhline(y=100, color='red', linestyle='--', label='100 UFC/mL')
+                                    max_recuento = df[columna].max()
+                                    if max_recuento <= 100:
+                                        ax.set_ylim(0, 100 * 1.1)
+                                    else:
+                                        max_above_100 = df[df[columna] > 100][columna].max()
+                                        ax.set_ylim(0, max_above_100 * 1.1)
+                                    ax.legend(loc='upper right', fontsize=5, framealpha=0)
+                                elif columna in ['Enterobacter', 'P. aeruginosa']:
+                                    ax.set_ylabel('Presencia (1) / Ausencia (0)', fontsize=5)
+                                    ax.set_yticks([0, 1])
+                                    ax.set_yticklabels(['Ausencia', 'Presencia'], fontsize=5)
+                                    ax.legend(loc='upper right', fontsize=5, framealpha=0)
+                                else:
+                                    ax.set_ylabel('', fontsize=5)
+
+                                ax.grid(True)
+
+                        pdf.savefig(fig)
+                        plt.close(fig)
+
+        files.download(pdf_filename)  # Descargar el archivo PDF generado
+
+# Paso 1: Cargar el archivo Excel
+xls = cargar_archivo()
+
+# Paso 2: Generar gráficos de dispersión según las especificaciones y guardarlos en un PDF
+generar_graficos(xls)
